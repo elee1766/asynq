@@ -412,6 +412,17 @@ func TestRedisInfo(t *testing.T) {
 		"used_memory_peak_perc",
 	}
 
+	if _, ok := info["dragonfly_version"]; ok {
+		wantKeys = []string{
+			"redis_version",
+			"uptime_in_days",
+			"connected_clients",
+			"used_memory_human",
+			"used_memory_peak",
+			"used_memory_rss_human",
+		}
+	}
+
 	for _, key := range wantKeys {
 		if _, ok := info[key]; !ok {
 			t.Errorf("RDB.RedisInfo() = %v is missing entry for %q", info, key)

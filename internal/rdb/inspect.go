@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/hibiken/asynq/internal/base"
 	"github.com/hibiken/asynq/internal/errors"
+	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cast"
 )
 
@@ -121,6 +121,7 @@ table.insert(res, redis.call("EXISTS", KEYS[11]))
 table.insert(res, "oldest_pending_since")
 if pendingTaskCount > 0 then
 	local id = redis.call("LRANGE", KEYS[1], -1, -1)[1]
+	-- TODO: must remove this call
 	table.insert(res, redis.call("HGET", ARGV[1] .. id, "pending_since"))
 else
 	table.insert(res, 0)
@@ -566,9 +567,8 @@ type GroupStat struct {
 // O(N) where N being the number of groups in the given queue.
 var groupStatsCmd = redis.NewScript(`
 local res = {}
-local group_names = redis.call("SMEMBERS", KEYS[1])
-for _, gname in ipairs(group_names) do
-	local size = redis.call("ZCARD", ARGV[1] .. gname)
+for _, gname in ipairs(KEYS) do
+	local size = redis.call("ZCARD", gname)
 	table.insert(res, gname)
 	table.insert(res, size)
 end
@@ -577,9 +577,16 @@ return res
 
 func (r *RDB) GroupStats(qname string) ([]*GroupStat, error) {
 	var op errors.Op = "RDB.GroupStats"
-	keys := []string{base.AllGroups(qname)}
-	argv := []interface{}{base.GroupKeyPrefix(qname)}
-	res, err := groupStatsCmd.Run(context.Background(), r.client, keys, argv...).Result()
+	groups, err := r.client.SMembers(context.Background(), base.AllGroups(qname)).Result()
+	if err != nil {
+		return nil, err
+	}
+	groupPrefix := base.GroupKeyPrefix(qname)
+	for idx, v := range groups {
+		groups[idx] = groupPrefix + v
+	}
+	argv := []interface{}{}
+	res, err := groupStatsCmd.Run(context.Background(), r.client, groups, argv...).Result()
 	if err != nil {
 		return nil, errors.E(op, errors.Unknown, err)
 	}
@@ -590,7 +597,7 @@ func (r *RDB) GroupStats(qname string) ([]*GroupStat, error) {
 	var stats []*GroupStat
 	for i := 0; i < len(data); i += 2 {
 		stats = append(stats, &GroupStat{
-			Group: data[i].(string),
+			Group: strings.TrimPrefix(data[i].(string), groupPrefix),
 			Size:  int(data[i+1].(int64)),
 		})
 	}
